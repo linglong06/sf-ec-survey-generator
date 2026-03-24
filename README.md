@@ -8,7 +8,17 @@ SAP SuccessFactors Employee Central (EC) 项目调研问卷生成器
 - 支持从客户制度文档中提取答案预填充问卷
 - 支持中英文双语输出
 - 覆盖EC核心模块：组织管理、岗位管理、人事管理等
-- 100+道专业调研问题
+- 90道专业调研问题
+
+## 工作流程
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  1. 展示问题    │ ──▶ │  2. 用户确认    │ ──▶ │  3. 提取答案    │ ──▶ │  4. 生成问卷    │
+└─────────────────┘     └─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+**重要**：在生成问卷前，会先展示完整问题列表供用户确认，用户可以修改或精简问题。
 
 ## 安装
 
@@ -57,7 +67,6 @@ python scripts/generate_survey.py -o ./survey.xlsx -a answers.json
 
 ### 命令参数
 
-
 | 参数                   | 说明                  | 默认值                   |
 | -------------------- | ------------------- | --------------------- |
 | `-o, --output`       | 输出文件路径              | `./sf_ec_survey.xlsx` |
@@ -65,7 +74,10 @@ python scripts/generate_survey.py -o ./survey.xlsx -a answers.json
 | `-l, --language`     | 语言：`cn`/`en`/`both` | `both`                |
 | `-a, --answers`      | 答案JSON文件路径          | -                     |
 | `--no-answer-column` | 不包含答案列              | 包含                    |
+| `--no-source-column` | 不包含来源列              | 包含                    |
+| `--no-sub-category`  | 不包含子类别行             | 包含                    |
 | `--template`         | 生成答案JSON模板          | -                     |
+| `--list-categories`  | 列出所有类别              | -                     |
 
 
 ### 可用类别
@@ -78,8 +90,7 @@ python scripts/generate_survey.py -o ./survey.xlsx -a answers.json
 
 ## 输出格式
 
-### 带答案的问卷（6列）
-
+### 带答案的问卷（7列）
 
 | 列   | 内容            |
 | --- | ------------- |
@@ -88,7 +99,8 @@ python scripts/generate_survey.py -o ./survey.xlsx -a answers.json
 | C   | 问题名称（中文）      |
 | D   | 问题名称（英文）      |
 | E   | 初步答案（来自制度文档）  |
-| F   | 回答（空白，供确认/补充） |
+| F   | 来源（文件名/章节）    |
+| G   | 回答（空白，供确认/补充） |
 
 
 ### 空白问卷（5列）
