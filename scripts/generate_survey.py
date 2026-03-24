@@ -4,11 +4,12 @@ SF EC Survey Generator - SAP SuccessFactors Employee Central 调研问卷生成�
 
 生成符合标准模板格式的Excel调研问卷，支持中英文双语。
 支持从客户制度文档中提取的答案填充问卷。
+支持来源追溯，记录答案来自哪个文件的哪个章节。
 
 工作流程：
 1. Claude从客户提供的制度文档中提取与SF EC相关的答案
-2. 答案通过JSON文件传递给脚本
-3. 脚本生成带初步答案的问卷Excel文件
+2. 答案通过JSON文件传递给脚本（包含答案和来源信息）
+3. 脚本生成带初步答案和来源的问卷Excel文件
 """
 
 import argparse
@@ -16,7 +17,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Union
 
 try:
     import openpyxl
@@ -241,11 +242,24 @@ CATEGORY_EN = {
 }
 
 
-def load_answers_from_json(json_path: str) -> Dict[str, str]:
+def load_answers_from_json(json_path: str) -> Dict[str, Dict[str, str]]:
     """
-    从JSON文件加载答案
+    从JSON文件加载答案（包含答案内容和来源信息）
 
-    JSON格式示例:
+    JSON格式示例（新格式，支持来源）:
+    {
+        "请简要介绍公司的业务范围和主营业务？": {
+            "answer": "公司主要从事XXX业务...",
+            "source": "员工手册.pdf / 第一章 公司概况"
+        },
+        "公司目前的员工总数是多少？": {
+            "answer": "约5000人",
+            "source": "人力资源制度.docx / 第二章 组织架构"
+        },
+        ...
+    }
+
+    JSON格式示例（旧格式，仅答案字符串）:
     {
         "请简要介绍公司的业务范围和主营业务？": "公司主要从事XXX业务...",
         "公司目前的员工总数是多少？": "约5000人",
@@ -256,11 +270,30 @@ def load_answers_from_json(json_path: str) -> Dict[str, str]:
         json_path: JSON文件路径
 
     Returns:
-        问题到答案的映射字典
+        问题到答案和来源的映射字典 {"question": {"answer": "...", "source": "..."}}
     """
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+
+        # 转换旧格式到新格式
+        result = {}
+        for key, value in data.items():
+            if key.startswith("_"):
+                continue  # 跳过说明字段
+            if isinstance(value, dict):
+                # 新格式：{"answer": "...", "source": "..."}
+                result[key] = {
+                    "answer": value.get("answer", ""),
+                    "source": value.get("source", "")
+                }
+            else:
+                # 旧格式：直接是字符串答案
+                result[key] = {
+                    "answer": str(value) if value else "",
+                    "source": ""
+                }
+        return result
     except Exception as e:
         print(f"Warning: Failed to load answers from {json_path}: {e}")
         return {}
@@ -273,8 +306,9 @@ def create_survey_excel(
     client_name: str = "",
     language: str = "both",
     include_sub_category: bool = True,
-    answers: Optional[Dict[str, str]] = None,
+    answers: Optional[Dict[str, Dict[str, str]]] = None,
     include_answer_column: bool = True,
+    include_source_column: bool = True,
 ) -> str:
     """
     创建SF EC调研问卷Excel文件
@@ -286,8 +320,9 @@ def create_survey_excel(
         client_name: 客户名称
         language: 语言选择 - "cn"(中文), "en"(英文), "both"(双语)
         include_sub_category: 是否包含子类别行
-        answers: 问题答案字典 {问题: 答案}
+        answers: 问题答案字典 {问题: {"answer": 答案, "source": 来源}}
         include_answer_column: 是否包含答案列
+        include_source_column: 是否包含来源列
 
     Returns:
         生成的文件路径
@@ -314,6 +349,9 @@ def create_survey_excel(
     answer_font = Font(name="微软雅黑", size=10, color="0066CC")
     answer_fill = PatternFill(start_color="F2F8FF", end_color="F2F8FF", fill_type="solid")
 
+    source_font = Font(name="微软雅黑", size=9, color="666666", italic=True)
+    source_fill = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
+
     thin_border = Border(
         left=Side(style="thin", color="B4B4B4"),
         right=Side(style="thin", color="B4B4B4"),
@@ -321,25 +359,51 @@ def create_survey_excel(
         bottom=Side(style="thin", color="B4B4B4"),
     )
 
-    # 设置列宽 - 根据是否包含答案列调整
+    # 确定列数和列宽
+    # 列：A=序号, B=类别, C=问题中文, D=问题英文, E=答案, F=来源, G=回答
     ws.column_dimensions["A"].width = 8
     ws.column_dimensions["B"].width = 18
-    ws.column_dimensions["C"].width = 50
+    ws.column_dimensions["C"].width = 45
     ws.column_dimensions["D"].width = 50
 
-    if include_answer_column:
+    if include_answer_column and include_source_column:
+        ws.column_dimensions["E"].width = 45
+        ws.column_dimensions["F"].width = 30
+        ws.column_dimensions["G"].width = 30
+    elif include_answer_column:
         ws.column_dimensions["E"].width = 45
         ws.column_dimensions["F"].width = 35
     else:
         ws.column_dimensions["E"].width = 35
 
     # 写入标题行
-    if include_answer_column:
-        headers = ["序号\nNumber", "问题类别\nQuestion Category", "问题名称（中文）\nQuestion Name (CN)",
-                   "问题名称（英文）\nQuestion Name (EN)", "初步答案（来自制度文档）\nPreliminary Answer", "回答\nReply"]
+    if include_answer_column and include_source_column:
+        headers = [
+            "序号\nNumber",
+            "问题类别\nQuestion Category",
+            "问题名称（中文）\nQuestion Name (CN)",
+            "问题名称（英文）\nQuestion Name (EN)",
+            "初步答案（来自制度文档）\nPreliminary Answer",
+            "来源（文件/章节）\nSource (File/Section)",
+            "回答\nReply"
+        ]
+    elif include_answer_column:
+        headers = [
+            "序号\nNumber",
+            "问题类别\nQuestion Category",
+            "问题名称（中文）\nQuestion Name (CN)",
+            "问题名称（英文）\nQuestion Name (EN)",
+            "初步答案（来自制度文档）\nPreliminary Answer",
+            "回答\nReply"
+        ]
     else:
-        headers = ["序号\nNumber", "问题类别\nQuestion Category", "问题名称（中文）\nQuestion Name (CN)",
-                   "问题名称（英文）\nQuestion Name (EN)", "回答\nReply"]
+        headers = [
+            "序号\nNumber",
+            "问题类别\nQuestion Category",
+            "问题名称（中文）\nQuestion Name (CN)",
+            "问题名称（英文）\nQuestion Name (EN)",
+            "回答\nReply"
+        ]
 
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
@@ -348,7 +412,7 @@ def create_survey_excel(
         cell.alignment = header_alignment
         cell.border = thin_border
 
-    ws.row_dimensions[1].height = 40
+    ws.row_dimensions[1].height = 45
 
     # 确定要包含的类别
     if categories is None:
@@ -357,6 +421,14 @@ def create_survey_excel(
     # 写入问题
     row = 2
     question_num = 1
+
+    # 计算最大列数
+    if include_answer_column and include_source_column:
+        max_col = 7
+    elif include_answer_column:
+        max_col = 6
+    else:
+        max_col = 5
 
     for category in categories:
         if category not in DEFAULT_QUESTIONS:
@@ -381,7 +453,6 @@ def create_survey_excel(
         cell.alignment = category_alignment
         cell.border = thin_border
 
-        max_col = 6 if include_answer_column else 5
         for col in range(3, max_col + 1):
             cell = ws.cell(row=row, column=col, value="")
             cell.fill = category_fill
@@ -443,11 +514,19 @@ def create_survey_excel(
                 ws.cell(row=row, column=4).alignment = normal_alignment
 
                 if include_answer_column:
-                    # 写入答案列
+                    # 获取答案和来源
                     answer = ""
+                    source = ""
                     if answers:
-                        answer = answers.get(q_cn, "")
+                        answer_data = answers.get(q_cn, {})
+                        if isinstance(answer_data, dict):
+                            answer = answer_data.get("answer", "")
+                            source = answer_data.get("source", "")
+                        else:
+                            # 兼容旧格式（字符串）
+                            answer = str(answer_data) if answer_data else ""
 
+                    # 写入答案列
                     cell = ws.cell(row=row, column=5, value=answer)
                     cell.font = answer_font
                     if answer:
@@ -455,13 +534,31 @@ def create_survey_excel(
                     cell.alignment = normal_alignment
                     cell.border = thin_border
 
-                    # 回答列
-                    ws.cell(row=row, column=6, value="").border = thin_border
+                    if include_source_column:
+                        # 写入来源列
+                        cell = ws.cell(row=row, column=6, value=source)
+                        cell.font = source_font
+                        if source:
+                            cell.fill = source_fill
+                        cell.alignment = normal_alignment
+                        cell.border = thin_border
+
+                        # 回答列
+                        ws.cell(row=row, column=7, value="").border = thin_border
+                    else:
+                        # 回答列
+                        ws.cell(row=row, column=6, value="").border = thin_border
                 else:
                     # 回答列
                     ws.cell(row=row, column=5, value="").border = thin_border
 
-                ws.row_dimensions[row].height = 45 if (answers and answers.get(q_cn)) else 40
+                # 根据答案长度调整行高
+                has_answer = answers and answers.get(q_cn)
+                if has_answer:
+                    ws.row_dimensions[row].height = 50
+                else:
+                    ws.row_dimensions[row].height = 40
+
                 row += 1
                 question_num += 1
 
@@ -478,7 +575,7 @@ def create_survey_excel(
 
 def create_answers_template(output_path: str) -> str:
     """
-    创建答案JSON模板文件
+    创建答案JSON模板文件（新格式，包含来源字段）
 
     Args:
         output_path: 输出文件路径
@@ -488,14 +585,18 @@ def create_answers_template(output_path: str) -> str:
     """
     template = {
         "_说明": "这是答案模板文件。Claude会从客户制度文档中提取答案并填充此文件。",
-        "_格式": "问题中文内容: 答案内容",
+        "_格式": "问题中文内容: {answer: 答案内容, source: 来源信息}",
+        "_来源格式": "文件名 / 章节/页码，例如：员工手册.pdf / 第一章 公司概况",
     }
 
     # 添加所有问题
     for category, sub_cats in DEFAULT_QUESTIONS.items():
         for sub_cat_data in sub_cats:
             for q_cn, q_en in sub_cat_data["questions"]:
-                template[q_cn] = ""
+                template[q_cn] = {
+                    "answer": "",
+                    "source": ""
+                }
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -515,11 +616,19 @@ def main():
   # 生成基础问卷
   python generate_survey.py -o survey.xlsx
 
-  # 带答案生成问卷
+  # 带答案生成问卷（包含来源追溯）
   python generate_survey.py -o survey.xlsx -a answers.json
 
   # 生成答案模板
   python generate_survey.py --template answers_template.json
+
+答案JSON格式（支持来源追溯）:
+  {
+    "问题？": {
+      "answer": "答案内容",
+      "source": "文件名.pdf / 章节"
+    }
+  }
         """
     )
     parser.add_argument(
@@ -569,6 +678,11 @@ def main():
         help="不包含答案列"
     )
     parser.add_argument(
+        "--no-source-column",
+        action="store_true",
+        help="不包含来源列"
+    )
+    parser.add_argument(
         "--template",
         help="生成答案JSON模板文件"
     )
@@ -587,7 +701,7 @@ def main():
         print(f"✅ 模板生成完成: {template_file}")
         print(f"\n使用方法:")
         print(f"  1. Claude从客户制度文档中提取答案")
-        print(f"  2. 将答案填入JSON文件")
+        print(f"  2. 将答案填入JSON文件（包含answer和source字段）")
         print(f"  3. 运行: python generate_survey.py -o survey.xlsx -a {args.template}")
         return
 
@@ -597,14 +711,17 @@ def main():
     print(f"  - 语言: {args.language}")
     print(f"  - 包含子类别: {not args.no_sub_category}")
     print(f"  - 包含答案列: {not args.no_answer_column}")
+    print(f"  - 包含来源列: {not args.no_source_column}")
 
     # 加载答案
     answers = None
     if args.answers:
         answers = load_answers_from_json(args.answers)
         print(f"  - 加载答案: {len(answers)} 条")
-        answered_count = sum(1 for v in answers.values() if v and not v.startswith("_"))
+        answered_count = sum(1 for v in answers.values() if isinstance(v, dict) and v.get("answer"))
+        sourced_count = sum(1 for v in answers.values() if isinstance(v, dict) and v.get("source"))
         print(f"  - 有效答案: {answered_count} 条")
+        print(f"  - 有来源: {sourced_count} 条")
 
     output_file = create_survey_excel(
         output_path=args.output,
@@ -615,6 +732,7 @@ def main():
         include_sub_category=not args.no_sub_category,
         answers=answers,
         include_answer_column=not args.no_answer_column,
+        include_source_column=not args.no_source_column,
     )
 
     print(f"\n✅ 问卷生成完成: {output_file}")
