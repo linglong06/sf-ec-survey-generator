@@ -436,8 +436,8 @@ def create_survey_excel(
 
         sub_categories = DEFAULT_QUESTIONS[category]
 
-        # 写入主类别行
-        cell = ws.cell(row=row, column=1, value=question_num)
+        # 写入主类别行（不编号，仅作为分隔行）
+        cell = ws.cell(row=row, column=1, value="")  # 主类别行不编号
         cell.font = category_font
         cell.fill = category_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -460,7 +460,7 @@ def create_survey_excel(
 
         ws.row_dimensions[row].height = 30
         row += 1
-        question_num += 1
+        # 注意：主类别行不增加 question_num
 
         # 写入子类别和问题
         for sub_cat_data in sub_categories:
